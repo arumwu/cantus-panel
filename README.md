@@ -104,6 +104,8 @@ npm run start:desktop
 
 ## 連接自己的資料
 
+原生對話讀取已改為獨立 worker 與來源驗證快取；macOS 背景常駐範本與限制見 [Session 讀取與服務復原](docs/SESSION-READS.md)。示範模式仍不讀取私人資料。
+
 示範、來源閱讀、AI 執行是三個分開的層級。必須自行填入設定並明確啟用，才會接觸真實資料。
 
 ```bash

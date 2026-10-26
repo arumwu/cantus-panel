@@ -14,6 +14,7 @@ const {createLive,panelJobs}=require('./live.cjs');
 const {LineageStore}=require('./lineage.cjs');
 const {PairCoordinator,DispatchReceiver}=require('./pair.cjs');
 const runtime=require('./runtime.cjs');
+const {createHistoryReader}=require('./session-history-reader.cjs');
 const {sourcesFor}=require(runtime.exporter);
 const PORT=Number(process.env.CANTUS_PANEL_PORT||4589),origin=`http://127.0.0.1:${PORT}`;
 const sources=runtime.demo?require('./demo.cjs').sources:sourcesFor({env:{},codexHome:runtime.codexHome,codexSqliteHome:runtime.codexHome,claudeProjectsDir:runtime.claudeConfig+'/projects',claudeDesktopDir:runtime.claudeDesktop,language:'zh-TW'});
@@ -35,7 +36,7 @@ files['/lineage.css']=['lineage.css','text/css; charset=utf-8'];
 function createServer(options={}){const catalogDeltas=new CatalogDelta();const csrf=crypto.randomBytes(32).toString('hex');const routing=options.routing||new RoutingStore();const models=options.models||new ModelCatalog();const managed=options.managed||new ManagedRunner();const native=options.native||createNative(id=>catalog.sessions.find(x=>x.id===id));const handoff=new HandoffRunner({managed,native,lookup:id=>catalog.sessions.find(x=>x.id===id),...options.handoff});const runnerFor=id=>handoff.records.has(id)||handoff.pending.has(id)?handoff:typeof id==='string'&&id.startsWith('panel_')?managed:native.runner;const server=http.createServer(async(req,res)=>{const send=(code,value,type='application/json; charset=utf-8')=>{res.writeHead(code,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cross-Origin-Resource-Policy':'same-origin','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'"});res.end(type.startsWith('application/json')?JSON.stringify(value):value);};
 if(req.headers.host!==`127.0.0.1:${PORT}`||req.headers.origin&&req.headers.origin!==origin)return send(403,{error:'拒絕非本機來源'});
 if(req.headers['sec-fetch-site']==='cross-site')return send(403,{error:'拒絕跨站請求'});
-const url=new URL(req.url,origin);
+const url=new URL(req.url,origin);let independentHistory=false;
 if((options.readOnly??process.env.CANTUS_PANEL_READ_ONLY==='1')&&req.method!=='GET')return send(423,{code:'read_only',error:'面板目前只供瀏覽，送出維持鎖定。'});
 try{
 if(url.pathname.startsWith('/api/m1/')){
@@ -127,7 +128,20 @@ if(files[url.pathname]){const [file,type]=files[url.pathname];return send(200,fs
 if(url.pathname==='/api/sessions'){if(!catalog.scannedAt||Date.now()-Date.parse(catalog.scannedAt)>=15000||url.searchParams.get('refresh')==='1'){await scan();enrichCodex(catalog.sessions);}const linked=new Set(handoff.records.keys());server.lineage ||= options.lineage||new LineageStore();return send(200,catalogDeltas.reply(server.lineage.catalog(presentCatalog({...catalog,sessions:catalog.sessions.filter(s=>!linked.has(s.id)&&!s.cwd?.startsWith(path.join(__dirname,'state','managed')+path.sep))},[...handoff.list(),...managed.list().filter(s=>!linked.has(s.id))],url.searchParams.get('background')==='1')),url.searchParams.get('since')||''));}
 if(url.pathname==='/api/history'&&handoff.records.has(url.searchParams.get('id')))return send(200,handoff.history(url.searchParams.get('id'),{before:url.searchParams.has('before')?Number(url.searchParams.get('before')):null,pageSignature:url.searchParams.get('signature')}));
 if(url.pathname==='/api/history'&&url.searchParams.get('id')?.startsWith('panel_'))return send(200,managed.history(url.searchParams.get('id')));
-if(url.pathname==='/api/history'){if(pending)await pending;const id=url.searchParams.get('id'),provider=url.searchParams.get('provider');const entry=catalog.sessions.find(x=>x.id===id&&x.provider===provider);if(!entry)return send(404,{error:'找不到這個會話，請重新整理'});if(!entry.hasTranscript)return send(409,{error:'只有會話索引，原始對話內容尚無法讀取'});const before=url.searchParams.has('before')?Number(url.searchParams.get('before')):null;const history=await sources[provider].read(id,{page:true,before,pageSignature:url.searchParams.get('signature')||undefined});return send(200,{...history,readOnly:true});}
-return send(404,{error:'找不到頁面'});}catch(e){const errors={stale:'原始會話正在更新，請按重新整理再讀取。',limit:'此會話超過安全讀取上限，請從原 App 查看。',missing:'原始會話檔案已不存在。'};send(e.status||409,{code:e.code||'source',error:url.pathname.startsWith('/api/native/')||url.pathname.startsWith('/api/routing/')||['/api/lineage','/api/pair','/api/dispatch'].includes(url.pathname)?e.message:errors[e.code]||'暫時無法讀取此會話。'});}});server.requestTimeout=15000;server.headersTimeout=10000;server.native=native;server.managed=managed;server.handoff=handoff;server.routing=routing;return server;}
+if(url.pathname==='/api/history'){
+ if(!catalog.scannedAt)await scan();
+ const id=url.searchParams.get('id'),provider=url.searchParams.get('provider');
+ const entry=catalog.sessions.find(x=>x.id===id&&x.provider===provider);
+ if(!entry)return send(404,{error:'找不到這個會話，請重新整理'});
+ if(!entry.hasTranscript)return send(409,{error:'只有會話索引，原始對話內容尚無法讀取'});
+ const before=url.searchParams.has('before')?Number(url.searchParams.get('before')):null,signature=url.searchParams.get('signature')||undefined;
+ if(!runtime.demo){
+  independentHistory=true;
+  if(!server.histories){server.histories=createHistoryReader({root:runtime.codexHome,claudeProjectsDir:runtime.claudeConfig+'/projects',claudeDesktopDir:runtime.claudeDesktop});server.once('close',()=>server.histories.close());}
+  return send(200,await server.histories.read({provider,id,before,signature}));
+ }
+ const history=await sources[provider].read(id,{page:true,before,pageSignature:signature});return send(200,{...history,readOnly:true});
+}
+return send(404,{error:'找不到頁面'});}catch(e){const errors={stale:'原始會話正在更新，請按重新整理再讀取。',limit:'此會話超過安全讀取上限，請從原 App 查看。',missing:'原始會話檔案已不存在。'};send(e.status||409,{code:e.code||'source',...(independentHistory?{historyIndependent:true}:{}),error:url.pathname.startsWith('/api/native/')||url.pathname.startsWith('/api/routing/')||['/api/lineage','/api/pair','/api/dispatch'].includes(url.pathname)?e.message:errors[e.code]||'暫時無法讀取此會話。'});}});server.requestTimeout=15000;server.headersTimeout=10000;server.native=native;server.managed=managed;server.handoff=handoff;server.routing=routing;return server;}
 if(require.main===module)createServer().listen(PORT,'127.0.0.1',()=>console.log(`Cantus web: ${origin}`));
 module.exports={createServer};

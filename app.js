@@ -43,7 +43,7 @@ async function api(url){
    if([502,503,504].includes(r.status))throw Object.assign(Error('目前連線不穩，請稍後再試。'),{status:r.status});
    if(r.status===401)throw Object.assign(Error('登入已失效，請重新登入後再試。'),{status:401});
    let data=await r.json();current();
-   if(!r.ok)throw Object.assign(Error(data.error||'讀取失敗'),{status:r.status,code:data.code});
+   if(!r.ok)throw Object.assign(Error(data.error||'讀取失敗'),{status:r.status,code:data.code,historyIndependent:data.historyIndependent===true});
    if(isCatalog){
     let status=$('catalog-cache-status');if(!status){status=el('p','native-note catalog-cache-status');status.id='catalog-cache-status';status.setAttribute('role','status');$('list').before(status);}
     const cache=data.catalogCache;status.textContent=cache?.stale?(cache.failed?'清單更新失敗，暫顯先前快照；可按重新整理重試。':'先顯示清單快照，正在背景更新…'):'';status.hidden=!cache?.stale;
@@ -59,7 +59,7 @@ async function api(url){
   }catch(e){
    current();
    const freshHistory=url.startsWith('/api/history?')&&!new URLSearchParams(url.split('?')[1]).has('before');
-   if(attempt===0&&e.code==='stale'&&freshHistory){await api('/api/sessions?refresh=1');current();continue;}
+   if(attempt===0&&e.code==='stale'&&freshHistory){if(!e.historyIndependent)await api('/api/sessions?refresh=1');current();continue;}
    if(attempt===0&&([502,503,504].includes(e.status)||/network|fetch|load failed|connection|offline|ECONN|ENOTFOUND/i.test(e.message))){await new Promise(resolve=>setTimeout(resolve,400));continue;}
    throw e;
   }

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node server.cjs",
-    "test": "node --test managed-init.test.cjs catalog-refresh.test.cjs catalog-budget.test.cjs conversation-tree.test.cjs lineage.test.cjs routing.test.cjs handoff.test.cjs panel-runner.test.cjs portable.test.cjs ui-regression.test.cjs pair.test.cjs pair-http.test.cjs pair-transport.test.cjs desktop/next-model.test.cjs desktop/server-next.test.cjs desktop/advanced-runner.test.cjs desktop/native-poll.test.cjs",
+    "test": "node --test session-history-reader.test.cjs session-history-http.test.cjs managed-init.test.cjs catalog-refresh.test.cjs catalog-budget.test.cjs conversation-tree.test.cjs lineage.test.cjs routing.test.cjs handoff.test.cjs panel-runner.test.cjs portable.test.cjs ui-regression.test.cjs pair.test.cjs pair-http.test.cjs pair-transport.test.cjs desktop/next-model.test.cjs desktop/server-next.test.cjs desktop/advanced-runner.test.cjs desktop/native-poll.test.cjs",
     "check:privacy": "node scripts/check-privacy.cjs",
     "start:gateway": "node cloud/gateway.cjs",
     "start:desktop": "node desktop/start.cjs"
