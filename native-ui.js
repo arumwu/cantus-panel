@@ -52,7 +52,7 @@ select=async function(s){
   const draftKey=window.cantusPlatform?.key(s.id)||s.id;
   const providerPicker=el('select','provider-picker');providerPicker.setAttribute('aria-label','回覆 AI');providerPicker.hidden=true;
   for(const p of window.cantusPlatform?.providers||['codex','claude']){const option=el('option','',p==='codex'?'Codex':'Claude');option.value=p;providerPicker.append(option);}providerPicker.value=providerChoices.get(draftKey)||s.provider;
-  const note=el('p','native-note','正在確認原生續作…'),input=el('textarea');input.placeholder='接著這段對話說…';input.setAttribute('aria-label','續聊訊息');input.maxLength=24000;input.value=drafts.get(draftKey)||'';input.oninput=()=>{drafts.set(draftKey,input.value);previewRoute();};
+  const note=el('p','native-note','正在確認原生續作…'),retryCapability=el('button','','重新確認'),input=el('textarea');retryCapability.type='button';retryCapability.hidden=true;input.placeholder='接著這段對話說…';input.setAttribute('aria-label','續聊訊息');input.maxLength=24000;input.value=drafts.get(draftKey)||'';input.oninput=()=>{drafts.set(draftKey,input.value);previewRoute();};
   const routingNote=el('p','routing-chat-note');routingNote.hidden=true;let lastRoute=null;
   function previewRoute(){const config=window.cantusRouting?.config,origin=s.sourceProvider||s.provider;if(providerPicker.value!=='auto'||!config){const cross=providerPicker.value&&providerPicker.value!==origin;routingNote.hidden=!cross;routingNote.textContent=cross?'切換 AI 會使用另一個原生對話接續；文字背景會交接，不會把回覆寫進原 AI 對話。':'';return;}routingNote.hidden=false;const d=input.value.trim()?CantusRules.choose(config,input.value,lastRoute):lastRoute;routingNote.textContent=d?((d.provider==='codex'?'Codex':'Claude')+' · '+(d.model||'原工具設定')+' — '+d.ruleName+'；'+d.reason):'自動派工已開啟 · 輸入訊息即可預覽負責的 AI';}
   if(window.cantusRouting)window.cantusRouting.preview=()=>{if(box.isConnected)previewRoute();};
@@ -60,7 +60,7 @@ select=async function(s){
   const liveMessage=el('article','message assistant live-message'),liveHead=el('div','message-head');
   liveHead.append(brandIcon(s.provider,'mini-avatar'),el('span','',s.provider==='codex'?'Codex':'Claude'));live.classList.add('message-body');liveMessage.append(liveHead,live);liveMessage.hidden=true;transcript.append(liveMessage);
   const queueList=el('div','native-queue');queueList.setAttribute('aria-label','待送訊息');
-  send.disabled=true;stop.hidden=true;actions.append(state,providerPicker,stop,send);label.append(input);box.append(note,label,routingNote,actions,queueList,approvals);$('detail').append(box);
+  send.disabled=true;stop.hidden=true;actions.append(state,providerPicker,stop,send);label.append(input);box.append(note,retryCapability,label,routingNote,actions,queueList,approvals);$('detail').append(box);
   transcript.scrollTop=transcript.scrollHeight;
   let optimistic;
   function showPending(p){
@@ -108,7 +108,7 @@ select=async function(s){
       if(requestedPending!==pending?.requestId){nativePoll=setTimeout(poll,900);return;}
       if(pending&&pending.requestId!==v.requestId&&sending){nativePoll=setTimeout(poll,900);return;}
       if(pending&&pending.requestId===v.requestId&&!v.busy&&v.phase==='completed'){pendingSends.delete(draftKey);await load(true);if(selected===s.id&&generation===nativeSelection)await select(catalog.sessions.find(x=>x.id===s.id)||s,{background:true});}
-      else{renderStatus(v);if(pending?.state.startsWith('送出未確認')&&pending.requestId!==v.requestId){state.textContent='尚未取得這筆送出結果，正在查詢；未自動重送。';send.disabled=true;}if(!v.busy&&!available)await checkCapability();if(v.busy||messageQueues.get(draftKey)?.items.length||!available||pending?.state.startsWith('送出未確認'))nativePoll=setTimeout(poll,v.busy?900:5000);}
+      else{const wasBusy=busy;renderStatus(v);if(pending?.state.startsWith('送出未確認')&&pending.requestId!==v.requestId){state.textContent='尚未取得這筆送出結果，正在查詢；未自動重送。';send.disabled=true;}if(!v.busy&&wasBusy&&!retryCapability.disabled){retryCapability.disabled=true;try{await checkCapability();}catch(e){capabilityFailed(e);}finally{retryCapability.disabled=false;}}if(v.busy||messageQueues.get(draftKey)?.items.length||pending?.state.startsWith('送出未確認'))nativePoll=setTimeout(poll,v.busy?900:5000);}
     }catch(e){state.textContent='暫時讀不到工作狀態，未自動重送。'+friendlyNativeError(e);nativePoll=setTimeout(poll,2500);}finally{polling=false;}
   }
   send.onclick=async()=>{
@@ -130,8 +130,10 @@ select=async function(s){
   input.onkeydown=e=>{if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();send.click();}};
   stop.onclick=async()=>{stop.disabled=true;try{renderStatus(await postNative('stop',{id:s.id}));}catch(e){state.textContent=friendlyNativeError(e);}finally{stop.disabled=false;}};
   let capabilityRequest=0;
-  async function checkCapability(){const seq=++capabilityRequest,cap=await api('/api/native/capability?id='+encodeURIComponent(s.id)+'&provider='+providerPicker.value);if(selected!==s.id||generation!==nativeSelection||seq!==capabilityRequest)return;if(cap.routing&&!providerPicker.querySelector('option[value="auto"]')){const current=providerPicker.value,auto=el('option','','自動派工');auto.value='auto';providerPicker.prepend(auto);providerPicker.value=current;}available=cap.available;providerPicker.hidden=!cap.switchable;note.textContent=cap.available?cap.note:friendlyNativeError(cap.note);send.disabled=!historyLoaded||sending||window.cantusPlatform?.role==='viewer'||(!busy&&!available);input.disabled=false;if(cap.available)$('detail').querySelector('.pill').textContent=s.handoff?'跨 AI 接續':s.managed?'面板獨立對話':'可原生續聊';previewRoute();return cap;}
-  providerPicker.onchange=async()=>{providerChoices.set(draftKey,providerPicker.value);send.disabled=true;available=false;try{await checkCapability();}catch(e){note.textContent=friendlyNativeError(e);}};
+  async function checkCapability(){const seq=++capabilityRequest,cap=await api('/api/native/capability?id='+encodeURIComponent(s.id)+'&provider='+providerPicker.value);if(selected!==s.id||generation!==nativeSelection||seq!==capabilityRequest)return;if(cap.routing&&!providerPicker.querySelector('option[value="auto"]')){const current=providerPicker.value,auto=el('option','','自動派工');auto.value='auto';providerPicker.prepend(auto);providerPicker.value=current;}available=cap.available;providerPicker.hidden=!cap.switchable;retryCapability.hidden=!!cap.available;note.textContent=cap.available?cap.note:friendlyNativeError(cap.note);send.disabled=!historyLoaded||sending||window.cantusPlatform?.role==='viewer'||(!busy&&!available);input.disabled=false;if(cap.available)$('detail').querySelector('.pill').textContent=s.handoff?'跨 AI 接續':s.managed?'面板獨立對話':'可原生續聊';previewRoute();return cap;}
+  function capabilityFailed(e){available=false;send.disabled=true;note.textContent='無法確認原生續作，草稿已保留。'+friendlyNativeError(e);retryCapability.hidden=false;}
+  retryCapability.onclick=async()=>{if(retryCapability.disabled)return;retryCapability.disabled=true;note.textContent='正在確認原生續作…';try{await checkCapability();void poll();}catch(e){capabilityFailed(e);}finally{retryCapability.disabled=false;}};
+  providerPicker.onchange=async()=>{providerChoices.set(draftKey,providerPicker.value);send.disabled=true;available=false;try{await checkCapability();}catch(e){capabilityFailed(e);}};
   void historyReady.then(ok=>{if(selected!==s.id||generation!==nativeSelection||!box.isConnected)return;historyLoaded=ok!==false;send.disabled=!historyLoaded||sending||window.cantusPlatform?.role==='viewer'||(!available&&!busy);transcript.scrollTop=transcript.scrollHeight;});
-  try{const cap=await checkCapability();if(cap?.available){$('context').append(el('label','','目前 AI 原生 Session ID'),el('p','',cap.sourceSessionId));}await poll();}catch(e){note.textContent=friendlyNativeError(e);}
+  try{const cap=await checkCapability();if(cap?.available){$('context').append(el('label','','目前 AI 原生 Session ID'),el('p','',cap.sourceSessionId));}await poll();}catch(e){capabilityFailed(e);}
 };
