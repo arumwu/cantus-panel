@@ -29,3 +29,6 @@ cookies*
 coverage/
 playwright-report/
 test-results/
+
+# Private deployment resources for the background application.
+desktop/background-app/services.json
